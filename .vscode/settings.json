@@ -1,0 +1,6 @@
+{
+  "[rust]": {
+    "editor.indentSize": 4
+  },
+  "terminal.integrated.enableImages": true
+}

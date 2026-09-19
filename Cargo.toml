@@ -1,0 +1,12 @@
+[package]
+name = "frac"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+crossterm = "0.29.0"
+image = "0.25.10"
+num-complex = "0.4.6"
+ratatui = "0.30.2"
+ratatui-image = "11.0.8"
