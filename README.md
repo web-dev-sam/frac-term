@@ -1,0 +1,57 @@
+<div align="center">
+
+# Frac Term
+
+<img src="assets/frac.svg" width="150" />
+
+_Using the power of Rust to zoom into the Mandelbrot set in your terminal! 🌀_
+
+</div>
+
+&nbsp;
+
+## Why does this exist?
+1. Fractals hypnotise your enemies.
+2. I wanted to try GPU compute in Rust.
+3. AI taught me how arbitrary precision in mandelbrot fractals work, its genius really.
+
+## Why are floats a horrible way to zoom into a fractal?
+- They run out of digits. _(at zoom 1e15 every pixel of your screen has the same f64 coordinate)_
+- They can't be fixed by throwing a GPU at it. GPUs only speak f32, which is even worse.
+- The genius: One reference orbit is iterated on the CPU in BigInt and every pixel only iterates its tiny delta from it. Floats can work with really small numbers just fine, so we only work with extremely small numbers on the GPU.
+
+## The math
+
+Every pixel is a point $c$ in the complex plane and the Mandelbrot iteration is
+
+```math
+z_{n+1} = z_n^2 + c, \qquad z_0 = 0
+```
+
+The sequence $z_0, z_1, z_2, \dots$ this produces for a given $c$ is called its **orbit**; the pixel is black if the orbit never escapes past $|z| > 2$, otherwise it's colored by how many steps it took.
+
+Pick one pixel as the *reference* and write its values in capitals: $C$ is its position and $Z_n$ its orbit. Any other pixel sits at a tiny offset from it, the gap $\Delta c$ (a few pixel widths), and its orbit differs from the reference by some $\delta_n$:
+
+```math
+c = C + \Delta c, \qquad z_n = Z_n + \delta_n
+```
+
+Plug both into the iteration:
+
+```math
+\begin{aligned}
+z_{n+1} &= z_n^2 + c \\
+Z_{n+1} + \delta_{n+1} &= (Z_n + \delta_n)^2 + C + \Delta c \\
+                       &= Z_n^2 + 2 Z_n \delta_n + \delta_n^2 + C + \Delta c \\
+                       &= Z_{n+1} + 2 Z_n \delta_n + \delta_n^2 + \Delta c \\
+\delta_{n+1} &= 2 Z_n \delta_n + \delta_n^2 + \Delta c, \qquad \delta_0 = 0
+\end{aligned}
+```
+
+So the GPU never sees $c$ or $z_n$. It only needs the gap $\Delta c$ and the precomputed reference values $Z_n$, and everything it touches (by multiplying) is small enough for f32. The escape test becomes $|Z_n + \delta_n| > 2$.
+
+The catch: this only holds while $\delta_n$ stays small relative to $Z_n$. When $|Z_n + \delta_n| \ll |Z_n|$ the delta has swallowed all the precision _(Pauldelbrot's criterion)_, so that pixel is marked as a glitch, a new reference is picked among the glitched pixels and they get re-run.
+
+## How it looks
+
+<img src="assets/frac-real.png" width="600" />
