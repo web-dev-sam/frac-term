@@ -20,6 +20,10 @@ _Using the power of Rust to zoom into the Mandelbrot set in your terminal! 🌀_
 - They can't be fixed by throwing a GPU at it. GPUs only speak f32, which is even worse.
 - The genius: One reference orbit is iterated on the CPU in BigInt and every pixel only iterates its tiny delta from it. Floats can work with really small numbers just fine, so we only work with extremely small numbers on the GPU.
 
+## How it looks
+
+<img src="assets/frac-real.webp" width="600" />
+
 ## The math
 
 Every pixel is a point $c$ in the complex plane and the Mandelbrot iteration is
@@ -48,10 +52,21 @@ Z_{n+1} + \delta_{n+1} &= (Z_n + \delta_n)^2 + C + \Delta c \\
 \end{aligned}
 ```
 
-So the GPU never sees $c$ or $z_n$. It only needs the gap $\Delta c$ and the precomputed reference values $Z_n$, and everything it touches (by multiplying) is small enough for f32. The escape test becomes $|Z_n + \delta_n| > 2$.
+So the GPU never sees $c$ or $z_n$. It only needs the gap $\Delta c$ and the precomputed reference values $Z_n$, and everything it touches (by multiplying) is small enough for f32. The escape test becomes $|Z_n + \delta_n| > 256$ _(not 2: a far-out bailout makes the fractional escape count $n - \log_2 \log_{256} |z|$ continuous, which is what gives the smooth colors)_.
 
 The catch: this only holds while $\delta_n$ stays small relative to $Z_n$. When $|Z_n + \delta_n| \ll |Z_n|$ the delta has swallowed all the precision _(Pauldelbrot's criterion)_, so that pixel is marked as a glitch, a new reference is picked among the glitched pixels and they get re-run.
 
-## How it looks
+<img src="assets/glitch.webp" />
 
-<img src="assets/frac-real.png" width="600" />
+_Left: what happens if you ignore that. Middle: where the criterion fires (white) and where the reference orbit escaped before the pixel did (grey). Right: the correct result._
+
+## Gallery
+
+<img src="assets/gallery/elephant_deep.webp" width="600" />
+<img src="assets/gallery/julia_deep.webp" width="600" />
+<img src="assets/gallery/misiurewicz.webp" width="600" />
+<img src="assets/gallery/scepter.webp" width="600" />
+<img src="assets/gallery/feather.webp" width="600" />
+<img src="assets/gallery/tendril.webp" width="600" />
+<img src="assets/gallery/deep_spiral.webp" width="600" />
+<img src="assets/gallery/wiki_e11.webp" width="600" />
