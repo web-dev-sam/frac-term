@@ -5,8 +5,23 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+base64-simd = "0.8"
 crossterm = "0.29.0"
+cubecl = { version = "0.10", features = ["wgpu"] }
 image = "0.25.10"
-num-complex = "0.4.6"
+num-bigint = "0.4"
+num-traits = "0.2"
 ratatui = "0.30.2"
 ratatui-image = "11.0.8"
+
+[profile.release]
+opt-level = 3
+
+# `cargo run` must stay interactive: the per-frame work (BigInt orbit, PNG +
+# base64 encoding, image conversion) lives in dependencies, which are 10-80x
+# slower unoptimized. Our own crate stays at a debuggable level.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
