@@ -23,6 +23,12 @@ type Rt = cubecl::wgpu::WgpuRuntime;
 
 const CUBE_DIM: u32 = 256;
 const MAX_REFERENCE_PASSES: usize = 8;
+/// Squared escape radius. Far beyond 2 so the fractional escape count is
+/// continuous across iteration boundaries; costs ~3 extra iterations per
+/// escaping pixel (|z| squares each step).
+const BAILOUT_SQ: f32 = 65536.0;
+/// Marks a pixel the current reference could not resolve.
+const UNRESOLVED: f32 = -1.0;
 
 pub struct Renderer {
     client: ComputeClient<Rt>,
@@ -54,29 +60,21 @@ impl Renderer {
 
     pub fn render(&self, view: &View, max_iterations: u32, size: Size) -> DynamicImage {
         let (width, height) = (size.width as usize, size.height as usize);
-        let iterations = self.iterations(view, max_iterations as u32, width, height);
+        let escapes = self.iterations(view, max_iterations, width, height);
 
-        // Colors depend only on the iteration count, so build the palette once.
-        let palette: Vec<[u8; 3]> = (0..=max_iterations as u32)
-            .map(|n| {
-                let (r, g, b) = iterations_to_rgb(n as f64, max_iterations);
-                [r, g, b]
-            })
-            .collect();
         let mut rgb = vec![0u8; 3 * width * height];
-        for (px, &n) in rgb.as_chunks_mut::<3>().0.iter_mut().zip(&iterations) {
-            *px = palette[n as usize];
+        for (px, &nu) in rgb.as_chunks_mut::<3>().0.iter_mut().zip(&escapes) {
+            let (r, g, b) = escape_to_rgb(nu, max_iterations);
+            *px = [r, g, b];
         }
         let img_buf = RgbImage::from_raw(width as u32, height as u32, rgb)
             .expect("buffer size must match width * height * 3");
         DynamicImage::ImageRgb8(img_buf)
     }
 
-    /// Escape iteration per pixel (row-major), `max_iter` for interior points.
-    fn iterations(&self, view: &View, max_iter: u32, width: usize, height: usize) -> Vec<u32> {
+    /// Fractional escape count per pixel (row-major), `max_iter` for interior points.
+    fn iterations(&self, view: &View, max_iter: u32, width: usize, height: usize) -> Vec<f32> {
         let n_pixels = width * height;
-        // Iteration counts are `0..=max_iter`; one past that marks "unresolved".
-        let unresolved_mark = max_iter + 1;
 
         let (cx, cy) = view.center();
         let pixel_size = view.span() / width as f64;
@@ -90,11 +88,11 @@ impl Renderer {
 
         let out_handle = self
             .client
-            .create(Bytes::from_elems(vec![unresolved_mark; n_pixels]));
+            .create(Bytes::from_elems(vec![UNRESOLVED; n_pixels]));
         let cube_count = (n_pixels as u32).div_ceil(CUBE_DIM);
 
         let mut reference = (width / 2, height / 2);
-        let mut iterations: Vec<u32> = Vec::new();
+        let mut iterations: Vec<f32> = Vec::new();
         let mut unresolved: Vec<usize> = Vec::new();
         for _ in 0..MAX_REFERENCE_PASSES {
             let (rx, ry) = grid.coordinate(reference.0, reference.1);
@@ -124,12 +122,12 @@ impl Renderer {
                 .client
                 .read_one(out_handle.clone())
                 .expect("GPU readback of iteration counts");
-            iterations = u32::from_bytes(&bytes).to_vec();
+            iterations = f32::from_bytes(&bytes).to_vec();
 
             unresolved = iterations
                 .iter()
                 .enumerate()
-                .filter(|&(_, &n)| n == unresolved_mark)
+                .filter(|&(_, &n)| n == UNRESOLVED)
                 .map(|(i, _)| i)
                 .collect();
             if unresolved.is_empty() {
@@ -144,7 +142,7 @@ impl Renderer {
         if !unresolved.is_empty() {
             let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
             let per_thread = unresolved.len().div_ceil(threads).max(1);
-            let resolved: Vec<(usize, u32)> = std::thread::scope(|scope| {
+            let resolved: Vec<(usize, f32)> = std::thread::scope(|scope| {
                 let workers: Vec<_> = unresolved
                     .chunks(per_thread)
                     .map(|indices| {
@@ -173,13 +171,20 @@ impl Renderer {
     }
 }
 
+/// Continuous escape count: `n` minus how far past the bailout `|z|² = mag`
+/// overshot, in doublings. Exactly `n` at the bailout, approaching `n - 1`
+/// one full squaring beyond it.
+fn fractional_escape(n: u32, mag: f64) -> f32 {
+    (n as f64 - (mag.log2() / f64::from(BAILOUT_SQ).log2()).log2()) as f32
+}
+
 /// Reference orbit `z_0, z_1, ...` as interleaved f32 `(re, im)` pairs.
 /// Stops early (shorter than `max_iter`) if the reference point escapes.
 fn reference_orbit(cx: &Fix, cy: &Fix, max_iter: u32) -> Vec<f32> {
     let prec = cx.prec();
     let mut zx = Fix::zero(prec);
     let mut zy = Fix::zero(prec);
-    let four = Fix::from_f64(4.0, prec);
+    let bailout = Fix::from_f64(f64::from(BAILOUT_SQ), prec);
 
     let mut orbit = Vec::with_capacity(2 * max_iter as usize);
     for _ in 0..max_iter {
@@ -188,7 +193,7 @@ fn reference_orbit(cx: &Fix, cy: &Fix, max_iter: u32) -> Vec<f32> {
 
         let xx = zx.mul(&zx);
         let yy = zy.mul(&zy);
-        if xx.add(&yy).gt(&four) {
+        if xx.add(&yy).gt(&bailout) {
             break;
         }
         let new_zx = xx.sub(&yy).add(cx);
@@ -200,32 +205,33 @@ fn reference_orbit(cx: &Fix, cy: &Fix, max_iter: u32) -> Vec<f32> {
 }
 
 /// Full-precision escape-time iteration for a single point.
-fn iterate_full(cx: &Fix, cy: &Fix, max_iter: u32) -> u32 {
+fn iterate_full(cx: &Fix, cy: &Fix, max_iter: u32) -> f32 {
     let prec = cx.prec();
     let mut zx = Fix::zero(prec);
     let mut zy = Fix::zero(prec);
-    let four = Fix::from_f64(4.0, prec);
+    let bailout = Fix::from_f64(f64::from(BAILOUT_SQ), prec);
     for n in 0..max_iter {
         let xx = zx.mul(&zx);
         let yy = zy.mul(&zy);
-        if xx.add(&yy).gt(&four) {
-            return n;
+        let mag = xx.add(&yy);
+        if mag.gt(&bailout) {
+            return fractional_escape(n, mag.to_f64());
         }
         let new_zx = xx.sub(&yy).add(cx);
         let new_zy = zx.mul(&zy).double().add(cy);
         zx = new_zx;
         zy = new_zy;
     }
-    max_iter
+    max_iter as f32
 }
 
 /// Iterates the delta of each still-unresolved pixel against the reference
-/// orbit. Writes the escape iteration, `max_iter` for interior points, or
-/// `max_iter + 1` when the reference is insufficient for this pixel.
+/// orbit. Writes the fractional escape count, `max_iter` for interior points,
+/// or [`UNRESOLVED`] when the reference is insufficient for this pixel.
 #[cube(launch_unchecked)]
 fn mandel_delta(
     ref_orbit: &Array<f32>,
-    out: &mut Array<u32>,
+    out: &mut Array<f32>,
     width: u32,
     height: u32,
     ref_len: u32,
@@ -235,9 +241,8 @@ fn mandel_delta(
     ref_py: f32,
 ) {
     let i = ABSOLUTE_POS;
-    let unresolved = max_iter + 1;
 
-    if i < (width * height) as usize && out[i] == unresolved {
+    if i < (width * height) as usize && out[i] == UNRESOLVED {
         let px = (i as u32) % width;
         let py = (i as u32) / width;
 
@@ -246,12 +251,12 @@ fn mandel_delta(
 
         let mut dx = 0.0f32;
         let mut dy = 0.0f32;
-        let mut result = max_iter;
+        let mut result = max_iter as f32;
         let mut n = 0u32;
 
         while n < max_iter {
             if n >= ref_len {
-                result = unresolved;
+                result = UNRESOLVED;
                 break;
             }
 
@@ -262,8 +267,12 @@ fn mandel_delta(
             let fy = zy + dy;
             let mag = fx * fx + fy * fy;
 
-            if mag > 4.0f32 {
-                result = n;
+            if mag > BAILOUT_SQ {
+                // Same formula as `fractional_escape`; no log2 on device, so
+                // ln with the constants folded: log2(log2(mag) / 16).
+                let ln_bailout = f32::ln(BAILOUT_SQ);
+                let ln2 = f32::ln(2.0f32);
+                result = n as f32 - f32::ln(f32::ln(mag) / ln_bailout) / ln2;
                 break;
             }
 
@@ -271,7 +280,7 @@ fn mandel_delta(
             // absorbed all the precision and the result is untrustworthy.
             let ref_mag = zx * zx + zy * zy;
             if mag < ref_mag * 1e-6f32 {
-                result = unresolved;
+                result = UNRESOLVED;
                 break;
             }
 
@@ -286,15 +295,16 @@ fn mandel_delta(
     }
 }
 
-/// Map the amount of recursive iterations into the corresponding pixel color
-fn iterations_to_rgb(current_iterations: f64, max_iterations: u32) -> (u8, u8, u8) {
-    if current_iterations >= max_iterations as f64 {
+/// Map the fractional escape count into the corresponding pixel color
+fn escape_to_rgb(nu: f32, max_iterations: u32) -> (u8, u8, u8) {
+    if nu >= max_iterations as f32 {
         return (0, 0, 0);
     }
+    let nu = f64::from(nu);
 
-    let hue = current_iterations / 64.0;
+    let hue = nu / 64.0;
     let saturation = 1.0;
-    let value = current_iterations / (current_iterations + 8.0);
+    let value = nu / (nu + 8.0);
 
     hsv_to_rgb(hue, saturation, value)
 }
@@ -340,22 +350,23 @@ mod tests {
         }
     }
 
-    fn direct_f64(cx: f64, cy: f64, max_iter: u32) -> u32 {
+    fn direct_f64(cx: f64, cy: f64, max_iter: u32) -> f32 {
         let (mut zx, mut zy) = (0.0f64, 0.0f64);
         for n in 0..max_iter {
             let (xx, yy) = (zx * zx, zy * zy);
-            if xx + yy > 4.0 {
-                return n;
+            if xx + yy > f64::from(BAILOUT_SQ) {
+                return fractional_escape(n, xx + yy);
             }
             (zx, zy) = (xx - yy + cx, 2.0 * zx * zy + cy);
         }
-        max_iter
+        max_iter as f32
     }
 
-    /// Fraction of pixels whose GPU iteration count differs from `expected`.
-    fn mismatch_rate(actual: &[u32], expected: impl Fn(usize) -> u32) -> f64 {
+    /// Fraction of pixels whose GPU escape count differs from `expected` by
+    /// more than f32 perturbation noise in the fractional part.
+    fn mismatch_rate(actual: &[f32], expected: impl Fn(usize) -> f32) -> f64 {
         let mismatches = (0..actual.len())
-            .filter(|&i| actual[i] != expected(i))
+            .filter(|&i| (actual[i] - expected(i)).abs() > 0.01)
             .count();
         mismatches as f64 / actual.len() as f64
     }
@@ -396,7 +407,11 @@ mod tests {
             width: w,
             height: h,
         };
-        let distinct = got.iter().collect::<std::collections::BTreeSet<_>>().len();
+        let distinct = got
+            .iter()
+            .map(|&n| n as u32)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
         let rate = mismatch_rate(&got, |i| {
             let (px, py) = grid.coordinate(i % w, i / w);
             iterate_full(&px, &py, max_iter)
