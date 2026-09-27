@@ -2,6 +2,16 @@
 name = "frac"
 version = "0.1.0"
 edition = "2024"
+description = "Renders Mandelbrot in Terminal"
+license = "MIT"
+repository = "https://github.com/web-dev-sam/frac-term"
+readme = "README.md"
+keywords = ["cli", "terminal", "fractal", "render"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "frac"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.104"
