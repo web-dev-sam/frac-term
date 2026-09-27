@@ -25,6 +25,14 @@ _Using the power of Rust to zoom into the Mandelbrot set in your terminal! 🌀_
 
 <img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/frac-real.webp" width="600" />
 
+## Jump to a spot
+
+The status line shows where you are. Pass those values back to open the viewer there:
+
+```sh
+frac --zoom 2.065e35 --re -1.24990508287924271184980842559554417152 --im 0.04593066206770328093013722081559604715 --iterations 745
+```
+
 ## The math
 
 Every pixel is a point $c$ in the complex plane and the Mandelbrot iteration is
@@ -54,6 +62,8 @@ Z_{n+1} + \delta_{n+1} &= (Z_n + \delta_n)^2 + C + \Delta c \\
 ```
 
 So the GPU never sees $c$ or $z_n$. It only needs the gap $\Delta c$ and the precomputed reference values $Z_n$, and everything it touches (by multiplying) is small enough for f32. The escape test becomes $|Z_n + \delta_n| > 256$ _(not 2: a far-out bailout makes the fractional escape count $n - \log_2 \log_{256} |z|$ continuous, which is what gives the smooth colors)_.
+
+Small enough in *digits*, that is. f32's exponent gives out at $10^{-38}$, and past zoom $10^{35}$ a pixel-sized $\Delta c$ is already below that: every delta flushes to zero and the whole screen turns one color. So the delta is stored as an f32 mantissa pair with a shared integer exponent, $\delta = (d_x, d_y) \cdot 2^e$. The recurrence only needs two scale factors that depend on $e$ ($2^e$ for the $\delta^2$ term, $2^{e_c - e}$ for $\Delta c$), so the hot loop gains three multiplies and $e$ is only touched when the mantissa drifts out of $[2^{-32}, 2^{32}]$. That carries the GPU side to zoom $10^{300}$; the remaining wall is f64 itself in the view math at ~$10^{305}$.
 
 The catch: this only holds while $\delta_n$ stays small relative to $Z_n$. When $|Z_n + \delta_n| \ll |Z_n|$ the delta has swallowed all the precision _(Pauldelbrot's criterion)_, so that pixel is marked as a glitch, a new reference is picked among the glitched pixels and they get re-run.
 

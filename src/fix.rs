@@ -43,6 +43,33 @@ impl Fix {
         }
     }
 
+    /// Parse a plain decimal (`-1.25`, `0.5`, `3`), rounded to the nearest
+    /// `prec`-bit value. Rejects exponents and anything else `to_decimal`
+    /// would not produce.
+    pub fn from_decimal(s: &str, prec: u64) -> Option<Self> {
+        let (negative, s) = match s.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, s),
+        };
+        let (int_part, frac_part) = s.split_once('.').unwrap_or((s, ""));
+        if int_part.is_empty() && frac_part.is_empty() {
+            return None;
+        }
+        let all_digits = |p: &str| p.bytes().all(|b| b.is_ascii_digit());
+        if !all_digits(int_part) || !all_digits(frac_part) {
+            return None;
+        }
+        // value = (int * 10^d + frac) / 10^d  =>  v = that << prec
+        let digits = format!("{int_part}{frac_part}");
+        let scaled = BigUint::parse_bytes(digits.as_bytes(), 10)?;
+        let denom = BigUint::from(10u32).pow(frac_part.len() as u32);
+        let v = BigInt::from(((scaled << prec) + (&denom >> 1u32)) / denom);
+        Some(Fix {
+            v: if negative { -v } else { v },
+            prec,
+        })
+    }
+
     pub fn prec(&self) -> u64 {
         self.prec
     }
@@ -158,6 +185,27 @@ mod tests {
         let tiny = Fix::from_f64(1e-30, 200).add(&Fix::from_f64(1.0, 200));
         let s = tiny.to_decimal(32);
         assert!(s.starts_with("1.000000000000000000000000000001"), "{s}");
+    }
+
+    #[test]
+    fn from_decimal_is_nearest_representable() {
+        // 38 decimals ≈ 126 bits: the status-line coordinates of a deep zoom.
+        let s = "-1.24990508287924271184980842559554417152";
+        let prec = 200;
+        let x = Fix::from_decimal(s, prec).unwrap();
+        // |v * 10^38 - k * 2^prec| <= 10^38 / 2  <=>  |v/2^prec - k/10^38| <= 2^-(prec+1)
+        let k: BigInt = -s.replace(['-', '.'], "").parse::<BigInt>().unwrap();
+        let denom = BigInt::from(10).pow(38);
+        let err = &x.v * &denom - (k << prec);
+        assert!(err.magnitude() * 2u32 <= *denom.magnitude(), "{err}");
+        assert_eq!(x.to_decimal(38), s);
+
+        assert_eq!(Fix::from_decimal("-0.75", 64).unwrap().to_f64(), -0.75);
+        assert_eq!(Fix::from_decimal("3", 64).unwrap().to_f64(), 3.0);
+        assert_eq!(Fix::from_decimal(".5", 64).unwrap().to_f64(), 0.5);
+        for bad in ["", "-", ".", "1e5", "0x1", "1.2.3", "abc"] {
+            assert!(Fix::from_decimal(bad, 64).is_none(), "{bad:?}");
+        }
     }
 
     #[test]

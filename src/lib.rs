@@ -41,13 +41,18 @@ impl View {
         64 + zoom.log2().max(0.0).ceil() as u64
     }
 
-    fn new() -> Self {
-        let prec = Self::precision_for(1.0);
-        Self {
-            re: Fix::zero(prec),
-            im: Fix::zero(prec),
-            zoom: 1.0,
+    /// View centered on the decimal coordinates `re`/`im` at `zoom`.
+    /// `None` if a coordinate is not a plain decimal or `zoom` is not positive.
+    fn at(zoom: f64, re: &str, im: &str) -> Option<Self> {
+        if !(zoom > 0.0) || !zoom.is_finite() {
+            return None;
         }
+        let prec = Self::precision_for(zoom);
+        Some(Self {
+            re: Fix::from_decimal(re, prec)?,
+            im: Fix::from_decimal(im, prec)?,
+            zoom,
+        })
     }
 
     fn zoom_by(&mut self, factor: f64) {
@@ -87,6 +92,26 @@ impl View {
             self.im.to_decimal(digits),
             self.re.prec(),
         )
+    }
+}
+
+/// Where to open the viewer. Built with [`Start::new`] so a bad position is
+/// rejected before the terminal is taken over.
+pub struct Start {
+    view: View,
+    max_iterations: u32,
+}
+
+impl Start {
+    /// `re`/`im` are decimal coordinates as printed in the status line.
+    pub fn new(zoom: f64, re: &str, im: &str, max_iterations: u32) -> anyhow::Result<Self> {
+        let view = View::at(zoom, re, im).ok_or_else(|| {
+            anyhow::anyhow!("invalid start position: zoom {zoom} re {re} im {im}")
+        })?;
+        Ok(Self {
+            view,
+            max_iterations: max_iterations.max(1),
+        })
     }
 }
 
@@ -182,11 +207,11 @@ struct App {
 
 impl App {
     /// Initialize app state
-    pub fn new(picker: Picker) -> Self {
+    pub fn new(picker: Picker, start: &Start) -> Self {
         let (requests, results) = spawn_renderer(picker.clone());
         Self {
-            view: View::new(),
-            max_iterations: 100,
+            view: start.view.clone(),
+            max_iterations: start.max_iterations,
             ratatui_image_picker: picker,
             requests,
             results,
@@ -292,7 +317,7 @@ impl App {
     }
 }
 
-pub fn run(terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+pub fn run(terminal: &mut DefaultTerminal, start: &Start) -> anyhow::Result<()> {
     const INPUT_POLL: Duration = Duration::from_millis(30);
 
     let in_vscode = std::env::var("TERM_PROGRAM").is_ok_and(|p| p.contains("vscode"));
@@ -309,7 +334,7 @@ pub fn run(terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
     if in_vscode && picker.protocol_type() == ProtocolType::Iterm2 {
         picker.set_protocol_type(ProtocolType::Sixel);
     }
-    let mut app = App::new(picker);
+    let mut app = App::new(picker, start);
 
     let mut dirty = true;
     loop {
