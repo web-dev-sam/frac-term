@@ -8,6 +8,7 @@ repository = "https://github.com/web-dev-sam/frac-term"
 readme = "README.md"
 keywords = ["cli", "terminal", "fractal", "render"]
 categories = ["command-line-utilities"]
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE*"]
 
 [[bin]]
 name = "frac"

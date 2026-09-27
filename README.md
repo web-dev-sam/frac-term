@@ -3,7 +3,7 @@
 
 # Frac Term
 
-<img src="assets/frac.svg" width="150" />
+<img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/frac.svg" width="150" />
 
 _Using the power of Rust to zoom into the Mandelbrot set in your terminal! 🌀_
 
@@ -23,7 +23,7 @@ _Using the power of Rust to zoom into the Mandelbrot set in your terminal! 🌀_
 
 ## How it looks
 
-<img src="assets/frac-real.webp" width="600" />
+<img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/frac-real.webp" width="600" />
 
 ## The math
 
@@ -57,17 +57,17 @@ So the GPU never sees $c$ or $z_n$. It only needs the gap $\Delta c$ and the pre
 
 The catch: this only holds while $\delta_n$ stays small relative to $Z_n$. When $|Z_n + \delta_n| \ll |Z_n|$ the delta has swallowed all the precision _(Pauldelbrot's criterion)_, so that pixel is marked as a glitch, a new reference is picked among the glitched pixels and they get re-run.
 
-<img src="assets/glitch.webp" />
+<img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/glitch.webp" />
 
 _Left: what happens if you ignore that. Middle: where the criterion fires (white) and where the reference orbit escaped before the pixel did (grey). Right: the correct result._
 
 ## Gallery
 
-<img src="assets/gallery/elephant_deep.webp" width="600" />
-<img src="assets/gallery/julia_deep.webp" width="600" />
-<img src="assets/gallery/misiurewicz.webp" width="600" />
-<img src="assets/gallery/scepter.webp" width="600" />
-<img src="assets/gallery/feather.webp" width="600" />
-<img src="assets/gallery/tendril.webp" width="600" />
-<img src="assets/gallery/deep_spiral.webp" width="600" />
-<img src="assets/gallery/wiki_e11.webp" width="600" />
+<img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/gallery/elephant_deep.webp" width="600" />
+<img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/gallery/julia_deep.webp" width="600" />
+<img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/gallery/misiurewicz.webp" width="600" />
+<img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/gallery/scepter.webp" width="600" />
+<img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/gallery/feather.webp" width="600" />
+<img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/gallery/tendril.webp" width="600" />
+<img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/gallery/deep_spiral.webp" width="600" />
+<img src="https://raw.githubusercontent.com/web-dev-sam/frac-term/master/assets/gallery/wiki_e11.webp" width="600" />
